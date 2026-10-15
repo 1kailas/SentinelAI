@@ -2,3 +2,14 @@
 @media(max-width:1000px){.top-search{width:180px}.content{padding:28px 22px}.app-shell{grid-template-columns:205px 1fr}.metric-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:760px){.topbar{padding:0 16px}.top-search{display:none}.topbar-tools{gap:9px}.identity-name{display:none}.app-shell{display:block}.sidebar{border-right:0;border-bottom:1px solid var(--line);padding:10px 14px;overflow-x:auto}.sidebar-brand,.sidebar-foot{display:none}.sidebar nav{display:flex;padding:0;gap:4px}.nav-item{width:auto;white-space:nowrap;padding:9px 11px}.nav-icon{display:none}.content{padding:23px 15px}.page-header{margin-bottom:22px}.page-header h1{font-size:25px}.two-col,.profile-grid{grid-template-columns:1fr}.welcome-band{display:block;padding:22px}.profile-chip{margin-top:20px}.filter-group{flex-direction:column}.panel-head{flex-wrap:wrap}.inline-search{min-width:160px}.footer{padding:0 16px}.footer span:last-child{display:none}.investigation-title{display:block}.score-block{text-align:left;margin-top:18px}.detail-list{grid-template-columns:1fr}.alert-card{flex-wrap:wrap}.alert-card .status-select{margin-left:20px}.admin-grid{display:flex;flex-direction:column}.metric-grid.compact{grid-template-columns:repeat(3,1fr)}.metric{padding:14px}.metric strong{font-size:22px}}
 @media(max-width:480px){.metric-grid,.metric-grid.compact{grid-template-columns:1fr 1fr}.user-menu .button{padding:7px 8px;font-size:11px}.content{padding:20px 12px}.panel{padding:16px}.device-action{display:block;text-align:right}.device-action .button{margin-top:7px}.task-row{display:block}.task-status{margin-top:12px}.welcome-band h2{font-size:21px}}
+
+/* Admin employee creation */
+.add-employee-form{border:1px solid var(--line);border-radius:8px;background:var(--surface, #fafbfd);padding:18px;margin:0 0 22px}
+.add-employee-form h3{margin:0 0 5px;font-size:15px;color:var(--navy)}
+.add-employee-form>p{margin:0 0 15px;font-size:12px}
+.add-employee-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
+.add-employee-fields label{display:grid;gap:6px;color:var(--muted);font-size:11px;font-weight:600}
+.add-employee-fields input{width:100%;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--white);padding:10px 11px;color:var(--navy);font:inherit;font-size:12px;outline-color:var(--blue)}
+.add-employee-fields .button{min-height:37px;white-space:nowrap}
+@media(max-width:900px){.add-employee-fields{grid-template-columns:1fr 1fr}.add-employee-fields .button{grid-column:1/-1}}
+@media(max-width:520px){.add-employee-fields{grid-template-columns:1fr}.add-employee-fields .button{grid-column:auto}}
