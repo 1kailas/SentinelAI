@@ -1,0 +1,61 @@
+{
+  "sequence_days": 14,
+  "feature_columns": [
+    "logon_count",
+    "logoff_count",
+    "first_logon_hour",
+    "last_logon_hour",
+    "n_distinct_pcs",
+    "offhours_logon",
+    "device_connects",
+    "device_disconnects",
+    "device_distinct_pcs",
+    "file_events",
+    "distinct_files"
+  ],
+  "train_cutoff_exclusive": "2010-12-22 00:00:00",
+  "validation_cutoff_exclusive": "2011-03-05 00:00:00",
+  "selected_threshold": 0.9500000000000001,
+  "validation_f1_at_selected_threshold": 0.49209932279909707,
+  "test_sequences": 43724,
+  "test_positive_labels": 107,
+  "confusion_matrix": [
+    [
+      43411,
+      206
+    ],
+    [
+      19,
+      88
+    ]
+  ],
+  "classification_report": {
+    "Normal": {
+      "precision": 0.999562514390974,
+      "recall": 0.9952770708668638,
+      "f1-score": 0.9974151894953301,
+      "support": 43617.0
+    },
+    "Suspicious": {
+      "precision": 0.29931972789115646,
+      "recall": 0.822429906542056,
+      "f1-score": 0.4389027431421446,
+      "support": 107.0
+    },
+    "accuracy": 0.994854084713201,
+    "macro avg": {
+      "precision": 0.6494411211410652,
+      "recall": 0.9088534887044599,
+      "f1-score": 0.7181589663187373,
+      "support": 43724.0
+    },
+    "weighted avg": {
+      "precision": 0.9978489022293356,
+      "recall": 0.994854084713201,
+      "f1-score": 0.9960484153721989,
+      "support": 43724.0
+    }
+  },
+  "test_average_precision": 0.6517449662982994,
+  "test_roc_auc": 0.99765824823083
+}
