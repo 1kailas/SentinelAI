@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 import json
+import sqlite3
 import threading
 import uuid
 
@@ -52,6 +53,12 @@ class PolicyUpdate(BaseModel):
 
 class LoginRequest(BaseModel):
 	user_id: str
+	password: str
+
+
+class CreateEmployeeRequest(BaseModel):
+	user_id: str
+	display_name: str
 	password: str
 
 
@@ -319,6 +326,38 @@ def admin_dashboard(_: dict = Depends(_admin)) -> dict:
 	risk_distribution = [{"label": level, "count": sum(item["risk_level"] == level for item in alerts_data)} for level in ("Critical", "High", "Medium", "Low")]
 	live_history = _live_risk_history()
 	return {"summary": {"total_employees": users, "total_activities": activities, "events_today": events_today, "anomalous_events": sum(item["risk_level"] in {"High", "Critical"} for item in alerts_data), "high_risks": sum(item["risk_level"] in {"High", "Critical"} for item in alerts_data), "critical_risks": sum(item["risk_level"] == "Critical" for item in alerts_data), "active_alerts": sum(item["status"] != "Resolved" for item in alerts_data)}, "users": profiles, "alerts": alerts_data[:30], "activity_types": database.rows("SELECT event_type AS label, COUNT(*) AS count FROM activities WHERE source IN ('application', 'local_device_monitor', 'simulation') GROUP BY event_type ORDER BY count DESC", db_path=DB_PATH), "risk_distribution": risk_distribution, "live_activity": database.rows("SELECT a.*, u.display_name FROM activities a JOIN users u ON u.user_id = a.user_id WHERE a.source IN ('application', 'local_device_monitor', 'simulation') ORDER BY a.timestamp DESC LIMIT 25", db_path=DB_PATH), "risk_trend": [{"user_id": item["user_id"], "timestamp": item["timestamp"], "risk_score": item["risk_score"], "risk_level": item["risk_level"]} for item in live_history[-60:]]}
+
+
+@app.post("/api/admin/users", status_code=201)
+def create_employee(employee: CreateEmployeeRequest, _: dict = Depends(_admin)) -> dict:
+	user_id = employee.user_id.strip()
+	display_name = employee.display_name.strip()
+	password = employee.password
+
+	if not 3 <= len(user_id) <= 32 or not all(char.isalnum() or char in "_-" for char in user_id):
+		raise HTTPException(status_code=400, detail="Employee ID must be 3–32 characters and use only letters, numbers, hyphens, or underscores.")
+	if not 2 <= len(display_name) <= 80:
+		raise HTTPException(status_code=400, detail="Full name must be between 2 and 80 characters.")
+	if len(password) < 8 or len(password) > 128:
+		raise HTTPException(status_code=400, detail="Password must be between 8 and 128 characters.")
+
+	conn = database.connection(DB_PATH)
+	try:
+		if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone():
+			raise HTTPException(status_code=409, detail="That employee ID already exists.")
+		conn.execute(
+			"INSERT INTO users(user_id, display_name, role, password_hash) VALUES (?, ?, 'employee', ?)",
+			(user_id, display_name, database.hash_password(password)),
+		)
+		conn.execute("INSERT INTO behavior_profiles(user_id) VALUES (?)", (user_id,))
+		conn.execute("INSERT INTO restrictions(user_id) VALUES (?)", (user_id,))
+		conn.commit()
+	except sqlite3.IntegrityError as exc:
+		conn.rollback()
+		raise HTTPException(status_code=409, detail="That employee ID already exists.") from exc
+	finally:
+		conn.close()
+	return {"created": True, "user": {"user_id": user_id, "display_name": display_name, "role": "employee"}}
 
 
 @app.get("/api/admin/users")
