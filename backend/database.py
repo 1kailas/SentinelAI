@@ -25,6 +25,7 @@ SIMULATION_FILES = [
 	("confidential_strategy.pdf", "CONFIDENTIAL"),
 ]
 INITIALIZE_LOCK = threading.RLock()
+INITIALIZED_DATABASES: set[str] = set()
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -48,8 +49,11 @@ def connection(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
 	conn = sqlite3.connect(path, timeout=30)
 	conn.row_factory = sqlite3.Row
 	conn.execute("PRAGMA busy_timeout = 30000")
+	resolved_path = str(path.resolve())
 	with INITIALIZE_LOCK:
-		initialize(conn)
+		if resolved_path not in INITIALIZED_DATABASES:
+			initialize(conn)
+			INITIALIZED_DATABASES.add(resolved_path)
 	return conn
 
 
@@ -111,7 +115,8 @@ def initialize(conn: sqlite3.Connection) -> None:
 		except sqlite3.OperationalError:
 			pass
 	for user_id, (display_name, role, password) in DEMO_USERS.items():
-		conn.execute("INSERT OR IGNORE INTO users(user_id, display_name, role, password_hash) VALUES (?, ?, ?, ?)", (user_id, display_name, role, hash_password(password, user_id.encode()[:16])))
+		if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone() is None:
+			conn.execute("INSERT INTO users(user_id, display_name, role, password_hash) VALUES (?, ?, ?, ?)", (user_id, display_name, role, hash_password(password, user_id.encode()[:16])))
 		conn.execute("INSERT OR IGNORE INTO behavior_profiles(user_id) VALUES (?)", (user_id,))
 		conn.execute("INSERT OR IGNORE INTO restrictions(user_id) VALUES (?)", (user_id,))
 	for name, classification in SIMULATION_FILES:
