@@ -1,0 +1,5 @@
+data/file.csv
+data/logon.csv
+outputs/sentinelai.db
+__pycache__/
+*.py[cod]

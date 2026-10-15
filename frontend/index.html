@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SentinelAI | Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app/style.css">
+</head>
+<body>
+  <div id="login-view" class="login-view">
+    <div class="login-card">
+      <div class="brand"><span class="brand-mark">S</span><div><strong>SentinelAI</strong><small>SECURITY WORKSPACE</small></div></div>
+      <div class="login-copy"><p class="eyebrow">Secure company access</p><h1>Welcome back</h1><p class="muted">Sign in to continue to your workspace.</p></div>
+      <form id="login-form"><label>User ID<input id="login-user" required autocomplete="username"></label><label>Password<input id="login-password" required type="password" autocomplete="current-password"></label><button class="button primary wide" type="submit">Sign in</button><p id="login-error" class="error" role="alert"></p></form>
+      <p class="login-note">Local demonstration environment</p>
+    </div>
+  </div>
+  <div id="app-view" class="hidden">
+    <header class="topbar"><div class="brand"><span class="brand-mark">S</span><div><strong>SentinelAI</strong><small id="portal-label">COMPANY WORKSPACE</small></div></div><div class="topbar-tools"><label class="top-search"><span>Search</span><input id="global-search" type="search" placeholder="Search this workspace" aria-label="Search this workspace"></label><button id="notice-btn" class="icon-button" title="Announcements" aria-label="Announcements">!</button><div class="user-menu"><span id="identity" class="avatar">S</span><span id="identity-name" class="identity"></span><button id="logout-btn" class="button secondary">Log out</button></div></div></header>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <main class="app-shell"><aside id="sidebar" class="sidebar"></aside><section class="content"><div class="page-header"><div><p class="eyebrow" id="page-eyebrow">Workspace</p><h1 id="page-title">Your workspace</h1><p id="page-subtitle" class="subhead"></p></div><span id="api-status" class="connection"><i></i>Connected</span></div><div id="employee-portal" class="hidden"></div><div id="admin-portal" class="hidden"></div></section></main>
+    <footer class="footer"><span>SentinelAI</span><span>Local demonstration workspace</span></footer>
+  </div>
+  <script src="/app/script.js"></script>
+</body>
+</html>
