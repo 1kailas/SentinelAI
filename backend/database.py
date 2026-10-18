@@ -11,11 +11,34 @@ import pandas as pd
 
 
 DEFAULT_DB = Path("outputs/sentinelai.db")
-DEMO_USERS = {
-	"employee1": ("Employee 1", "employee", "employee1-demo"),
-	"employee2": ("Employee 2", "employee", "employee2-demo"),
-	"admin": ("Security Administrator", "admin", "admin-demo"),
-}
+ADMIN_USER = ("admin", "Security Administrator", "admin", "admin-demo")
+DEMO_EMPLOYEES = [
+	("EMP-003", "Adam Sharma", "Engineering", "Software Engineer", "EMP-010"),
+	("EMP-004", "Aarav Mehta", "Engineering", "Senior Software Engineer", "EMP-010"),
+	("EMP-005", "Diya Kapoor", "Product", "Product Designer", "EMP-011"),
+	("EMP-006", "Riya Nair", "Human Resources", "People Operations Specialist", "EMP-012"),
+	("EMP-007", "Kabir Singh", "Finance", "Financial Analyst", "EMP-013"),
+	("EMP-008", "Ananya Rao", "Engineering", "QA Engineer", "EMP-010"),
+	("EMP-009", "Vihaan Patel", "Sales", "Account Executive", "EMP-014"),
+	("EMP-010", "Maya Iyer", "Engineering", "Engineering Manager", None),
+	("EMP-011", "Rohan Malhotra", "Product", "Product Manager", None),
+	("EMP-012", "Neha Joshi", "Human Resources", "HR Manager", None),
+	("EMP-013", "Arjun Desai", "Finance", "Finance Manager", None),
+	("EMP-014", "Ishaan Verma", "Sales", "Sales Manager", None),
+	("EMP-015", "Meera Shah", "Marketing", "Marketing Specialist", "EMP-016"),
+	("EMP-016", "Kavya Menon", "Marketing", "Marketing Manager", None),
+	("EMP-017", "Ritvik Bansal", "Engineering", "Data Engineer", "EMP-010"),
+	("EMP-018", "Saanvi Gupta", "Engineering", "UX Researcher", "EMP-011"),
+	("EMP-019", "Aditya Kulkarni", "Operations", "Operations Analyst", "EMP-020"),
+	("EMP-020", "Tara Choudhary", "Operations", "Operations Manager", None),
+	("EMP-021", "Nikhil Sethi", "IT", "Systems Administrator", "EMP-022"),
+	("EMP-022", "Ira Mukherjee", "IT", "IT Manager", None),
+	("EMP-023", "Dev Khanna", "Legal", "Compliance Analyst", "EMP-024"),
+	("EMP-024", "Aisha Thomas", "Legal", "Compliance Manager", None),
+	("EMP-025", "Yash Agarwal", "Customer Success", "Customer Success Specialist", "EMP-026"),
+	("EMP-026", "Pooja Reddy", "Customer Success", "Customer Success Manager", None),
+	("EMP-027", "Reyansh Bose", "Research", "Research Associate", "EMP-010"),
+]
 SIMULATION_FILES = [
 	("project_report.pdf", "NORMAL"),
 	("project_data.csv", "NORMAL"),
@@ -25,6 +48,7 @@ SIMULATION_FILES = [
 	("confidential_strategy.pdf", "CONFIDENTIAL"),
 ]
 INITIALIZE_LOCK = threading.RLock()
+INITIALIZED_DATABASES: set[str] = set()
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -48,8 +72,11 @@ def connection(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
 	conn = sqlite3.connect(path, timeout=30)
 	conn.row_factory = sqlite3.Row
 	conn.execute("PRAGMA busy_timeout = 30000")
+	resolved_path = str(path.resolve())
 	with INITIALIZE_LOCK:
-		initialize(conn)
+		if resolved_path not in INITIALIZED_DATABASES:
+			initialize(conn)
+			INITIALIZED_DATABASES.add(resolved_path)
 	return conn
 
 
@@ -57,7 +84,10 @@ def initialize(conn: sqlite3.Connection) -> None:
 	conn.executescript("""
 		CREATE TABLE IF NOT EXISTS users (
 			user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, role TEXT NOT NULL,
-			password_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+			password_hash TEXT NOT NULL, employee_code TEXT UNIQUE, email TEXT UNIQUE,
+			department TEXT, job_title TEXT, manager_code TEXT,
+			status TEXT NOT NULL DEFAULT 'active', is_demo INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS activities (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, timestamp TEXT NOT NULL,
@@ -101,6 +131,19 @@ def initialize(conn: sqlite3.Connection) -> None:
 			UNIQUE(user_id, day)
 		);
 	""")
+	for column, definition in (
+		("employee_code", "TEXT"),
+		("email", "TEXT"),
+		("department", "TEXT"),
+		("job_title", "TEXT"),
+		("manager_code", "TEXT"),
+		("status", "TEXT NOT NULL DEFAULT 'active'"),
+		("is_demo", "INTEGER NOT NULL DEFAULT 0"),
+	):
+		try:
+			conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+		except sqlite3.OperationalError:
+			pass
 	try:
 		conn.execute("ALTER TABLE alerts ADD COLUMN source TEXT NOT NULL DEFAULT 'cert'")
 	except sqlite3.OperationalError:
@@ -110,10 +153,40 @@ def initialize(conn: sqlite3.Connection) -> None:
 			conn.execute(f"ALTER TABLE restrictions ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
 		except sqlite3.OperationalError:
 			pass
-	for user_id, (display_name, role, password) in DEMO_USERS.items():
-		conn.execute("INSERT OR IGNORE INTO users(user_id, display_name, role, password_hash) VALUES (?, ?, ?, ?)", (user_id, display_name, role, hash_password(password, user_id.encode()[:16])))
-		conn.execute("INSERT OR IGNORE INTO behavior_profiles(user_id) VALUES (?)", (user_id,))
-		conn.execute("INSERT OR IGNORE INTO restrictions(user_id) VALUES (?)", (user_id,))
+	admin_id, admin_name, admin_role, admin_password = ADMIN_USER
+	if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (admin_id,)).fetchone() is None:
+		conn.execute("INSERT INTO users(user_id, display_name, role, password_hash) VALUES (?, ?, ?, ?)", (admin_id, admin_name, admin_role, hash_password(admin_password, admin_id.encode()[:16])))
+	conn.execute("UPDATE users SET role = 'admin', is_demo = 0, status = 'active' WHERE user_id = ?", (admin_id,))
+
+	legacy_ids = ("employee1", "employee2")
+	for user_id in legacy_ids:
+		conn.execute("DELETE FROM risk_history WHERE user_id = ?", (user_id,))
+		conn.execute("DELETE FROM activities WHERE user_id = ?", (user_id,))
+		conn.execute("DELETE FROM alerts WHERE user_id = ? AND source <> 'cert'", (user_id,))
+		conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+		conn.execute("DELETE FROM behavior_profiles WHERE user_id = ?", (user_id,))
+		conn.execute("DELETE FROM restrictions WHERE user_id = ?", (user_id,))
+	for employee_code, display_name, department, job_title, manager_code in DEMO_EMPLOYEES:
+		email = f"{display_name.lower().replace(' ', '.')}@sentinelai.demo"
+		first_name = display_name.split()[0].lower()
+		values = (employee_code, display_name, email, department, job_title, manager_code)
+		if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (employee_code,)).fetchone() is None:
+			conn.execute(
+				"""INSERT INTO users(
+					user_id, display_name, role, password_hash, employee_code, email,
+					department, job_title, manager_code, status, is_demo
+				) VALUES (?, ?, 'employee', ?, ?, ?, ?, ?, ?, 'active', 1)""",
+				(employee_code, display_name, hash_password(f"{first_name}1", employee_code.encode()[:16]), values[0], *values[2:]),
+			)
+		else:
+			conn.execute(
+				"""UPDATE users SET display_name = ?, role = 'employee', employee_code = ?,
+					email = ?, department = ?, job_title = ?, manager_code = ?,
+					status = 'active', is_demo = 1 WHERE user_id = ?""",
+				(display_name, values[0], *values[2:], employee_code),
+			)
+		conn.execute("INSERT OR IGNORE INTO behavior_profiles(user_id) VALUES (?)", (employee_code,))
+		conn.execute("INSERT OR IGNORE INTO restrictions(user_id) VALUES (?)", (employee_code,))
 	for name, classification in SIMULATION_FILES:
 		conn.execute("INSERT OR IGNORE INTO simulation_files(name, classification) VALUES (?, ?)", (name, classification))
 	for device_id in ("USB-001", "USB-002", "Laptop-01"):
@@ -170,7 +243,11 @@ def get_user(user_id: str, db_path: str | Path = DEFAULT_DB) -> dict | None:
 def authenticate(user_id: str, password: str, db_path: str | Path = DEFAULT_DB) -> dict | None:
 	conn = connection(db_path)
 	try:
-		row = conn.execute("SELECT user_id, display_name, role, password_hash FROM users WHERE user_id = ?", (user_id,)).fetchone()
+		row = conn.execute(
+			"""SELECT user_id, display_name, role, password_hash FROM users
+			WHERE user_id = ? OR employee_code = ? OR lower(email) = lower(?)""",
+			(user_id, user_id, user_id),
+		).fetchone()
 		if not row or not verify_password(password, row["password_hash"]):
 			return None
 		return {"user_id": row["user_id"], "display_name": row["display_name"], "role": row["role"]}

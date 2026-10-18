@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 import json
+import sqlite3
 import threading
 import uuid
 
@@ -18,6 +19,8 @@ from . import database
 from .model import DEFAULT_ARTIFACT, score_with_saved_model, train_model
 from .preprocessing import build_features
 from .risk_engine import add_risk_scores, simulation_risk
+from .lstm_inference import METRICS_PATH, score_lstm
+from .lstm_model import MODEL_PATH, SCALER_PATH
 from .device_monitor import WindowsDeviceMonitor
 
 
@@ -52,6 +55,12 @@ class PolicyUpdate(BaseModel):
 
 class LoginRequest(BaseModel):
 	user_id: str
+	password: str
+
+
+class CreateEmployeeRequest(BaseModel):
+	user_id: str
+	display_name: str
 	password: str
 
 
@@ -131,25 +140,58 @@ def _live_risk_history(user_id: str | None = None) -> list[dict]:
 
 
 def _run_analysis_job(job_id: str) -> None:
-	try:
-		with ANALYSIS_LOCK:
-			ANALYSIS_JOBS[job_id]["status"] = "running"
-		features = _features()
-		if ARTIFACT_PATH.exists():
-			scored = score_with_saved_model(features, ARTIFACT_PATH)
-			metrics = None
-		else:
-			scored, metrics = train_model(features, artifact_path=ARTIFACT_PATH)
-		result = add_risk_scores(scored)
-		database.replace_analysis(result, DB_PATH)
-		with ANALYSIS_LOCK:
-			ANALYSIS_JOBS[job_id].update({"status": "completed", "observations": len(result), "alerts": int(result["alert_required"].sum()), "metrics": metrics})
-	except (FileNotFoundError, ValueError) as exc:
-		with ANALYSIS_LOCK:
-			ANALYSIS_JOBS[job_id].update({"status": "failed", "error": str(exc)})
-	except Exception:
-		with ANALYSIS_LOCK:
-			ANALYSIS_JOBS[job_id].update({"status": "failed", "error": "Analysis failed unexpectedly."})
+    try:
+        with ANALYSIS_LOCK:
+            ANALYSIS_JOBS[job_id]["status"] = "running"
+
+        features = _features()
+
+        if ARTIFACT_PATH.exists():
+            scored = score_with_saved_model(features, ARTIFACT_PATH)
+            metrics = None
+        else:
+            scored, metrics = train_model(
+                features,
+                artifact_path=ARTIFACT_PATH,
+            )
+
+        lstm_scores = score_lstm(features)
+
+        scored["day"] = pd.to_datetime(scored["day"]).dt.strftime("%Y-%m-%d")
+        lstm_scores["day"] = pd.to_datetime(lstm_scores["day"]).dt.strftime("%Y-%m-%d")
+
+        result = scored.merge(
+            lstm_scores,
+            on=["user", "day"],
+            how="left",
+        )
+        result["lstm_available"] = result["lstm_score"].notna()
+        result["lstm_flag"] = result["lstm_flag"].fillna(0).astype(int)
+
+        result = add_risk_scores(result)
+        database.replace_analysis(result, DB_PATH)
+
+        with ANALYSIS_LOCK:
+            ANALYSIS_JOBS[job_id].update({
+                "status": "completed",
+                "observations": len(result),
+                "alerts": int(result["alert_required"].sum()),
+                "metrics": metrics,
+            })
+
+    except (FileNotFoundError, ValueError) as exc:
+        with ANALYSIS_LOCK:
+            ANALYSIS_JOBS[job_id].update({
+                "status": "failed",
+                "error": str(exc),
+            })
+    except Exception:
+        with ANALYSIS_LOCK:
+            ANALYSIS_JOBS[job_id].update({
+                "status": "failed",
+                "error": "Analysis failed unexpectedly.",
+            })
+
 
 
 def _active_employee():
@@ -321,10 +363,46 @@ def admin_dashboard(_: dict = Depends(_admin)) -> dict:
 	return {"summary": {"total_employees": users, "total_activities": activities, "events_today": events_today, "anomalous_events": sum(item["risk_level"] in {"High", "Critical"} for item in alerts_data), "high_risks": sum(item["risk_level"] in {"High", "Critical"} for item in alerts_data), "critical_risks": sum(item["risk_level"] == "Critical" for item in alerts_data), "active_alerts": sum(item["status"] != "Resolved" for item in alerts_data)}, "users": profiles, "alerts": alerts_data[:30], "activity_types": database.rows("SELECT event_type AS label, COUNT(*) AS count FROM activities WHERE source IN ('application', 'local_device_monitor', 'simulation') GROUP BY event_type ORDER BY count DESC", db_path=DB_PATH), "risk_distribution": risk_distribution, "live_activity": database.rows("SELECT a.*, u.display_name FROM activities a JOIN users u ON u.user_id = a.user_id WHERE a.source IN ('application', 'local_device_monitor', 'simulation') ORDER BY a.timestamp DESC LIMIT 25", db_path=DB_PATH), "risk_trend": [{"user_id": item["user_id"], "timestamp": item["timestamp"], "risk_score": item["risk_score"], "risk_level": item["risk_level"]} for item in live_history[-60:]]}
 
 
+@app.post("/api/admin/users", status_code=201)
+def create_employee(employee: CreateEmployeeRequest, _: dict = Depends(_admin)) -> dict:
+	user_id = employee.user_id.strip()
+	display_name = employee.display_name.strip()
+	password = employee.password
+
+	if not 3 <= len(user_id) <= 32 or not all(char.isalnum() or char in "_-" for char in user_id):
+		raise HTTPException(status_code=400, detail="Employee ID must be 3–32 characters and use only letters, numbers, hyphens, or underscores.")
+	if not 2 <= len(display_name) <= 80:
+		raise HTTPException(status_code=400, detail="Full name must be between 2 and 80 characters.")
+	if len(password) < 8 or len(password) > 128:
+		raise HTTPException(status_code=400, detail="Password must be between 8 and 128 characters.")
+
+	conn = database.connection(DB_PATH)
+	try:
+		if conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone():
+			raise HTTPException(status_code=409, detail="That employee ID already exists.")
+		conn.execute(
+			"""INSERT INTO users(
+				user_id, display_name, role, password_hash, status, is_demo
+			) VALUES (?, ?, 'employee', ?, 'active', 0)""",
+			(user_id, display_name, database.hash_password(password)),
+		)
+		conn.execute("INSERT INTO behavior_profiles(user_id) VALUES (?)", (user_id,))
+		conn.execute("INSERT INTO restrictions(user_id) VALUES (?)", (user_id,))
+		conn.commit()
+	except sqlite3.IntegrityError as exc:
+		conn.rollback()
+		raise HTTPException(status_code=409, detail="That employee ID already exists.") from exc
+	finally:
+		conn.close()
+	return {"created": True, "user": {"user_id": user_id, "display_name": display_name, "role": "employee"}}
+
+
 @app.get("/api/admin/users")
 def admin_users(_: dict = Depends(_admin)) -> list[dict]:
 	return database.rows("""
-		SELECT u.user_id, u.display_name, r.monitoring_state, r.file_access,
+		SELECT u.user_id, u.employee_code, u.email, u.display_name, u.department,
+			u.job_title, u.manager_code, u.status, u.is_demo,
+			r.monitoring_state, r.file_access,
 			COALESCE(MAX(h.risk_score), 0) AS current_risk
 		FROM users u
 		JOIN restrictions r ON r.user_id = u.user_id
@@ -336,9 +414,90 @@ def admin_users(_: dict = Depends(_admin)) -> list[dict]:
 	""", db_path=DB_PATH)
 
 
+@app.get("/api/admin/demo-credentials")
+def demo_credentials(_: dict = Depends(_admin)) -> list[dict]:
+	return [
+		{
+			"name": display_name,
+			"employee_code": employee_code,
+			"login_identifier": email,
+			"password": f"{display_name.split()[0].lower()}1",
+		}
+		for employee_code, display_name, _, _, _ in database.DEMO_EMPLOYEES
+		for email in [f"{display_name.lower().replace(' ', '.')}@sentinelai.demo"]
+	]
+
+
 @app.get("/api/admin/users/{user_id}")
 def admin_user(user_id: str, _: dict = Depends(_admin)) -> dict:
 	return {"profile": database.rows("SELECT * FROM behavior_profiles WHERE user_id = ?", (user_id,), DB_PATH), "policy": database.rows("SELECT * FROM restrictions WHERE user_id = ?", (user_id,), DB_PATH), "activity": database.rows("SELECT * FROM activities WHERE user_id = ? AND source IN ('application', 'local_device_monitor', 'simulation') ORDER BY timestamp DESC LIMIT 100", (user_id,), DB_PATH), "risk_history": _live_risk_history(user_id)}
+
+
+@app.get("/api/admin/lstm/summary")
+def admin_lstm_summary(page: int = 1, page_size: int = 25, _: dict = Depends(_admin)) -> dict:
+	if page < 1 or page_size < 1 or page_size > 100:
+		raise HTTPException(status_code=400, detail="page must be at least 1 and page_size must be between 1 and 100")
+	artifacts_available = all(path.exists() for path in (MODEL_PATH, SCALER_PATH, METRICS_PATH))
+	metrics = {}
+	if METRICS_PATH.exists():
+		try:
+			metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+		except (OSError, TypeError, ValueError) as exc:
+			raise HTTPException(status_code=500, detail="Saved LSTM metrics could not be read.") from exc
+	summary = database.rows("""
+		SELECT COUNT(*) AS total_scored,
+			SUM(CASE WHEN json_extract(features_json, '$.lstm_flag') = 1 THEN 1 ELSE 0 END) AS flagged_count
+		FROM results
+		WHERE json_extract(features_json, '$.lstm_available') = 1
+	""", db_path=DB_PATH)[0]
+	total_scored = int(summary["total_scored"] or 0)
+	flagged_count = int(summary["flagged_count"] or 0)
+	offset = (page - 1) * page_size
+	flagged_rows = database.rows("""
+		SELECT user_id, day,
+			json_extract(features_json, '$.lstm_score') AS lstm_score,
+			json_extract(features_json, '$.lstm_flag') AS lstm_flag,
+			json_extract(features_json, '$.lstm_available') AS lstm_available
+		FROM results
+		WHERE json_extract(features_json, '$.lstm_available') = 1
+			AND json_extract(features_json, '$.lstm_flag') = 1
+		ORDER BY lstm_score DESC, day DESC, user_id
+		LIMIT ? OFFSET ?
+	""", (page_size, offset), DB_PATH)
+	distribution = database.rows("""
+		SELECT CASE
+			WHEN json_extract(features_json, '$.lstm_score') < 0.25 THEN '0.00-0.24'
+			WHEN json_extract(features_json, '$.lstm_score') < 0.50 THEN '0.25-0.49'
+			WHEN json_extract(features_json, '$.lstm_score') < 0.75 THEN '0.50-0.74'
+			ELSE '0.75-1.00'
+		END AS label, COUNT(*) AS count
+		FROM results
+		WHERE json_extract(features_json, '$.lstm_available') = 1
+		GROUP BY label
+		ORDER BY label
+	""", db_path=DB_PATH)
+	return {
+		"model": {
+			"status": "available" if artifacts_available else "unavailable",
+			"artifacts_available": artifacts_available,
+			"analysis_available": bool(total_scored),
+			"sequence_days": metrics.get("sequence_days"),
+			"threshold": metrics.get("selected_threshold"),
+		},
+		"summary": {
+			"total_scored": total_scored,
+			"flagged_count": flagged_count,
+			"flagged_percentage": round((flagged_count / total_scored) * 100, 2) if total_scored else 0,
+		},
+		"distribution": distribution,
+		"flagged_employee_days": flagged_rows,
+		"pagination": {
+			"page": page,
+			"page_size": page_size,
+			"total": flagged_count,
+			"total_pages": (flagged_count + page_size - 1) // page_size,
+		},
+	}
 
 
 @app.get("/api/admin/alerts")
@@ -376,9 +535,25 @@ def restore_files(user_id: str, _: dict = Depends(_admin)) -> dict:
 	return {"file_access": "restored", "monitoring_state": "NORMAL"}
 
 
+def _expand_lstm_fields(rows: list[dict]) -> list[dict]:
+        import json
+
+        for row in rows:
+            raw = row.get("features_json")
+            try:
+                features = json.loads(raw) if isinstance(raw, str) else {}
+            except (TypeError, ValueError):
+                features = {}
+
+            for key in ("lstm_score", "lstm_flag", "lstm_available"):
+                if key in features:
+                    row[key] = features[key]
+        return rows
+
+
 @app.get("/api/dashboard")
 def dashboard(_: dict = Depends(_admin)) -> dict:
-	results = database.rows("SELECT * FROM results ORDER BY day DESC, risk_score DESC")
+	results = _expand_lstm_fields(database.rows("SELECT * FROM results ORDER BY day DESC, risk_score DESC"))
 	alerts = database.rows("SELECT * FROM alerts WHERE source = 'cert' ORDER BY risk_score DESC")
 	if not results:
 		return {"has_data": False, "summary": {}, "risk_distribution": [], "activity_distribution": [], "recent_alerts": []}
@@ -407,12 +582,12 @@ def users(_: dict = Depends(_admin)) -> list[dict]:
 
 @app.get("/api/users/{user_id}")
 def user(user_id: str, _: dict = Depends(_admin)) -> list[dict]:
-	return database.rows("SELECT * FROM results WHERE user_id = ? ORDER BY day DESC", (user_id,))
+	return _expand_lstm_fields(database.rows("SELECT * FROM results WHERE user_id = ? ORDER BY day DESC", (user_id,)))
 
 
 @app.get("/api/anomalies")
 def anomalies(_: dict = Depends(_admin)) -> list[dict]:
-	return database.rows("SELECT * FROM results WHERE is_flagged = 1 ORDER BY risk_score DESC")
+	return _expand_lstm_fields(database.rows("SELECT * FROM results WHERE is_flagged = 1 ORDER BY risk_score DESC"))
 
 
 @app.get("/api/alerts")
