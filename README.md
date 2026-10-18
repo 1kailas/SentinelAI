@@ -41,7 +41,7 @@ Historical dataset analysis and simulated application activity should be treated
 ## 🛠️ Tech Stack
 
 | Technology            | Purpose                                |
-
+|-----------------------|----------------------------------------|
 | Python                | Backend and machine learning           |
 | FastAPI               | Backend API                            |
 | HTML, CSS, JavaScript | Web interface                          |
