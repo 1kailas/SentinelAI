@@ -97,8 +97,8 @@ SentinelAI/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/GauriNair77/SentinelAl.git
-cd SentinelAl
+git clone https://github.com/GauriNair77/SentinelAI.git
+cd SentinelAI
 ```
 
 If the repository URL or capitalization differs, use the clone URL shown on your GitHub repository page.

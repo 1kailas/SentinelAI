@@ -1,7 +1,9 @@
-
 """Transparent, project-defined heuristic and LSTM risk scoring."""
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 
 RISK_WEIGHTS = {
@@ -24,8 +26,19 @@ def _level(score: float) -> str:
     return "Low"
 
 
-def add_risk_scores(scored: pd.DataFrame) -> pd.DataFrame:
+def add_risk_scores(scored: "pd.DataFrame") -> "pd.DataFrame":
+    if pd is None:
+        raise ImportError("pandas is required to calculate risk scores on DataFrames.")
+
     result = scored.copy()
+    if result.empty:
+        result["anomaly_component"] = 0.0
+        result["lstm_component"] = 0.0
+        result["risk_score"] = 0.0
+        result["risk_level"] = "Low"
+        result["explanation"] = ""
+        result["alert_required"] = 0
+        return result
 
     anomaly_min = result["anomaly_score"].min()
     anomaly_max = result["anomaly_score"].max()
@@ -71,28 +84,29 @@ def add_risk_scores(scored: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def _explain(row: pd.Series) -> str:
+def _explain(row) -> str:
     reasons = []
 
-    if row["anomaly_component"] >= 0.6:
+    if row.get("anomaly_component", 0) >= 0.6:
         reasons.append("the activity was anomalous")
 
     if row.get("lstm_component", 0) >= 0.6:
         reasons.append("the LSTM model detected an unusual activity pattern")
 
-    if row["offhours_logon"]:
+    if row.get("offhours_logon"):
         reasons.append("logon activity occurred outside typical hours")
 
-    if row["n_distinct_pcs"] > 1:
+    if row.get("n_distinct_pcs", 0) > 1:
         reasons.append(f"activity involved {int(row['n_distinct_pcs'])} computers")
 
-    if row["file_events"] > 0:
+    if row.get("file_events", 0) > 0:
         reasons.append(f"{int(row['file_events'])} file events were recorded")
 
     if not reasons:
         return "No strong contextual indicators were observed in this user-day."
 
-    return f"{row['risk_level']} risk because " + ", ".join(reasons) + "."
+    risk_level = row.get("risk_level", "Low")
+    return f"{risk_level} risk because " + ", ".join(reasons) + "."
 
 
 def simulation_risk(

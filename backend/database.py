@@ -7,7 +7,10 @@ import sqlite3
 import threading
 from pathlib import Path
 
-import pandas as pd
+try:
+	import pandas as pd
+except ImportError:
+	pd = None
 
 
 DEFAULT_DB = Path("outputs/sentinelai.db")
@@ -130,6 +133,12 @@ def initialize(conn: sqlite3.Connection) -> None:
 			explanation TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'New', source TEXT NOT NULL DEFAULT 'cert',
 			UNIQUE(user_id, day)
 		);
+		CREATE INDEX IF NOT EXISTS idx_activities_user_timestamp ON activities(user_id, timestamp);
+		CREATE INDEX IF NOT EXISTS idx_activities_user_resource ON activities(user_id, resource);
+		CREATE INDEX IF NOT EXISTS idx_risk_history_user_timestamp ON risk_history(user_id, timestamp);
+		CREATE INDEX IF NOT EXISTS idx_risk_history_event_id ON risk_history(event_id);
+		CREATE INDEX IF NOT EXISTS idx_alerts_source_risk ON alerts(source, risk_score DESC);
+		CREATE INDEX IF NOT EXISTS idx_results_user_day ON results(user_id, day);
 	""")
 	for column, definition in (
 		("employee_code", "TEXT"),
@@ -269,6 +278,9 @@ def update_profile(user_id: str, event_type: str, event_hour: float, device_id: 
 	conn = connection(db_path)
 	try:
 		profile = conn.execute("SELECT * FROM behavior_profiles WHERE user_id = ?", (user_id,)).fetchone()
+		if not profile:
+			conn.execute("INSERT OR IGNORE INTO behavior_profiles(user_id) VALUES (?)", (user_id,))
+			profile = conn.execute("SELECT * FROM behavior_profiles WHERE user_id = ?", (user_id,)).fetchone()
 		known = set(json.loads(profile["known_devices_json"])) if profile else set()
 		if device_id:
 			known.add(device_id)
