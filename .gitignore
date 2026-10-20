@@ -6,6 +6,7 @@ outputs/*.db-journal
 outputs/*.db-wal
 outputs/*.db-shm
 __pycache__/
+**/__pycache__/
 *.py[cod]
 .env
 .env.*
