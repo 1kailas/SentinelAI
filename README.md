@@ -154,6 +154,14 @@ Open the application at:
 
 These URLs apply when the server starts successfully with the default local configuration.
 
+### 6. Run Unit Tests
+
+Execute the automated test suite from the project root:
+
+```bash
+python -m unittest discover tests
+```
+
 ## 📊 Model Evaluation
 
 SentinelAI explores model evaluation using metrics such as:
