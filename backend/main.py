@@ -536,19 +536,17 @@ def restore_files(user_id: str, _: dict = Depends(_admin)) -> dict:
 
 
 def _expand_lstm_fields(rows: list[dict]) -> list[dict]:
-        import json
+	for row in rows:
+		raw = row.get("features_json")
+		try:
+			features = json.loads(raw) if isinstance(raw, str) else {}
+		except (TypeError, ValueError):
+			features = {}
 
-        for row in rows:
-            raw = row.get("features_json")
-            try:
-                features = json.loads(raw) if isinstance(raw, str) else {}
-            except (TypeError, ValueError):
-                features = {}
-
-            for key in ("lstm_score", "lstm_flag", "lstm_available"):
-                if key in features:
-                    row[key] = features[key]
-        return rows
+		for key in ("lstm_score", "lstm_flag", "lstm_available"):
+			if key in features:
+				row[key] = features[key]
+	return rows
 
 
 @app.get("/api/dashboard")
